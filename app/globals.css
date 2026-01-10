@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  /* 基本の色（ライトモード） */
   --background: #faf9f3;
   --foreground: #171717;
 }
@@ -12,10 +13,15 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ▼▼▼ 修正ポイント ▼▼▼
+   もしここが残っていると、PCの設定によっては背景が黒くなってしまいます。
+   完全に「白背景・黒文字」で統一するなら、このブロックごと削除するか、
+   以下のようにライトモードと同じ色を指定してください。
+*/
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #faf9f3; /* ← #0a0a0a から変更（白系にする） */
+    --foreground: #171717; /* ← #ededed から変更（黒にする） */
   }
 }
 

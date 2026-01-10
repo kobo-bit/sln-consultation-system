@@ -1,4 +1,13 @@
 'use client';
+const PREFECTURES = [
+  "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+  "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+  "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県",
+  "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+  "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+  "徳島県", "香川県", "愛媛県", "高知県",
+  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
+];
 
 import { useEffect, useState, use } from 'react';
 import { db, auth } from '../../../lib/firebase';
@@ -46,6 +55,13 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
   const { id } = use(params);
   const currentUser = auth.currentUser;
 
+  // ▼▼▼ 追加: 基本情報編集用のState ▼▼▼
+  const [isEditing, setIsEditing] = useState(false);
+  const [basicFormData, setBasicFormData] = useState({
+    name: '', consulteeType: 'student', schoolType: 'public', 
+    schoolStage: 'high', prefecture: '', summary: '', detail: ''
+  });
+
   // 🔐 門番機能
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -73,6 +89,15 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
       if (d.exists()) {
         const data = d.data();
         setCaseData({ id: d.id, ...data });
+        setBasicFormData({
+          name: data.name || '',
+          consulteeType: data.consulteeType || 'student',
+          schoolType: data.schoolType || 'public',
+          schoolStage: data.schoolStage || 'high',
+          prefecture: data.prefecture || '',
+          summary: data.summary || '',
+          detail: data.detail || ''
+        });
         setEditData({
             meetingStatus: data.meetingStatus || 'untouched',
             meetingType: data.meetingType || 'online',
@@ -197,6 +222,20 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
     } catch { alert('失敗しました'); }
   };
   
+  // ▼▼▼ 追加: 基本情報の保存処理 ▼▼▼
+  const handleSaveBasicInfo = async () => {
+    try {
+        await updateDoc(doc(db, 'cases', id), basicFormData);
+        // 画面の表示データも更新
+        setCaseData({ ...caseData, ...basicFormData });
+        setIsEditing(false);
+        alert('基本情報を更新しました');
+    } catch (e) {
+        console.error(e);
+        alert('更新に失敗しました');
+    }
+  }
+  
   // 記録追加用の関数 (もし以前のコードで消えていたら復活させてください)
   const handleAddRecord = async () => {
     if (!newRecord.trim()) return; setIsSending(true);
@@ -260,20 +299,103 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
                 </div>
             </div>
 
+            
+            {/* 詳細情報カード */}
             <div className="bg-white rounded-lg shadow p-8">
-                <h2 className="text-lg font-bold border-b pb-2 mb-6 text-gray-800">詳細情報</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <dl className="space-y-4">
-                        <div className="bg-blue-50 p-4 rounded border border-blue-100">
-                            <div className="flex justify-between items-center mb-2"><dt className="text-xs font-bold text-blue-800 uppercase">担当スタッフ</dt><button onClick={assignToMe} className="text-xs bg-white text-blue-600 border border-blue-200 px-2 py-1 rounded hover:bg-blue-50 shadow-sm">自分を割り当て</button></div>
-                            <dd className="grid grid-cols-2 gap-2">{staffList.map((staff) => (<label key={staff.email} className="flex items-center space-x-2 cursor-pointer bg-white p-2 rounded shadow-sm hover:bg-gray-50"><input type="checkbox" checked={assignedList.includes(staff.email)} onChange={() => toggleStaff(staff.email)} className="form-checkbox h-4 w-4 text-blue-600 rounded" /><span className="text-sm text-gray-700 font-medium">{staff.name}</span></label>))}</dd>
-                        </div>
-                        <div><dt className="text-sm text-gray-500">属性</dt><dd className="text-lg font-medium text-gray-900">{caseData.consulteeType === 'student' ? '生徒本人' : '大人'} ({caseData.schoolStage})</dd></div>
-                        <div><dt className="text-sm text-gray-500">学校</dt><dd className="text-lg font-medium text-gray-900">{caseData.prefecture} / {caseData.schoolType === 'public' ? '公立' : '私立'}</dd></div>
-                    </dl>
-                    <div className="bg-gray-50 p-4 rounded-lg"><h3 className="font-bold text-gray-600 mb-1 text-sm">概要</h3><p className="text-gray-900 font-bold mb-4">{caseData.summary}</p><h3 className="font-bold text-gray-600 mb-1 text-sm">詳細</h3><p className="text-gray-800 whitespace-pre-wrap text-sm leading-relaxed">{caseData.detail}</p></div>
+                <div className="flex justify-between items-center border-b pb-2 mb-6">
+                    <h2 className="text-lg font-bold text-gray-800">詳細情報</h2>
+                    {/* ▼▼▼ 追加: 編集ボタン ▼▼▼ */}
+                    {!isEditing && (
+                        <button onClick={() => setIsEditing(true)} className="text-sm text-indigo-600 hover:bg-indigo-50 px-3 py-1 rounded transition">
+                            ✏️ 情報を編集
+                        </button>
+                    )}
                 </div>
-                <div className="mt-8 pt-6 border-t flex items-center justify-between"><span className="font-bold text-gray-700">ステータス:</span><div className="flex gap-2">{['new', 'in_progress', 'completed'].map((sk) => (<button key={sk} onClick={() => handleStatusChange(sk)} className={`px-4 py-2 rounded-full text-sm font-bold ${caseData.status === sk ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 border'}`}>{sk}</button>))}</div></div>
+
+                {isEditing ? (
+                    /* ▼▼▼ 編集モード ▼▼▼ */
+                    <div className="space-y-6 animate-fadeIn">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">氏名</label><input type="text" className="w-full border rounded p-2" value={basicFormData.name} onChange={e => setBasicFormData({...basicFormData, name: e.target.value})} /></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">相談者タイプ</label><select className="w-full border rounded p-2" value={basicFormData.consulteeType} onChange={e => setBasicFormData({...basicFormData, consulteeType: e.target.value})}><option value="student">生徒本人</option><option value="adult">大人</option></select></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">都道府県</label><select className="w-full border rounded p-2" value={basicFormData.prefecture} onChange={e => setBasicFormData({...basicFormData, prefecture: e.target.value})}>{PREFECTURES.map(p => <option key={p} value={p}>{p}</option>)}<option value="海外・その他">海外・その他</option></select></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">学校段階</label><select className="w-full border rounded p-2" value={basicFormData.schoolStage} onChange={e => setBasicFormData({...basicFormData, schoolStage: e.target.value})}><option value="elem">小学校</option><option value="middle">中学校</option><option value="high">高等学校</option><option value="secondary">中高一貫</option><option value="other">その他</option></select></div>
+                        </div>
+                        <div><label className="block text-sm font-bold text-gray-700 mb-1">相談概要（件名）</label><input type="text" className="w-full border rounded p-2" value={basicFormData.summary} onChange={e => setBasicFormData({...basicFormData, summary: e.target.value})} /></div>
+                        <div><label className="block text-sm font-bold text-gray-700 mb-1">詳細内容</label><textarea rows={6} className="w-full border rounded p-2" value={basicFormData.detail} onChange={e => setBasicFormData({...basicFormData, detail: e.target.value})} /></div>
+                        
+                        <div className="flex justify-end gap-3 pt-4 border-t">
+                            <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">キャンセル</button>
+                            <button onClick={handleSaveBasicInfo} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded hover:bg-indigo-700 shadow">更新する</button>
+                        </div>
+                    </div>
+                ) : (
+                    /* ▼▼▼ 通常表示モード (既存の表示部分を少し整理) ▼▼▼ */
+                    <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <dl className="space-y-4">
+                            <div className="bg-blue-50 p-4 rounded border border-blue-100">
+                                <div className="flex justify-between items-center mb-2"><dt className="text-xs font-bold text-blue-800 uppercase">担当スタッフ</dt><button onClick={assignToMe} className="text-xs bg-white text-blue-600 border border-blue-200 px-2 py-1 rounded hover:bg-blue-50 shadow-sm">自分を割り当て</button></div>
+                                <dd className="grid grid-cols-2 gap-2">{staffList.map((staff) => (<label key={staff.email} className="flex items-center space-x-2 cursor-pointer bg-white p-2 rounded shadow-sm hover:bg-gray-50"><input type="checkbox" checked={assignedList.includes(staff.email)} onChange={() => toggleStaff(staff.email)} className="form-checkbox h-4 w-4 text-blue-600 rounded" /><span className="text-sm text-gray-700 font-medium">{staff.name}</span></label>))}</dd>
+                            </div>
+                            <div><dt className="text-sm text-gray-500">属性</dt><dd className="text-lg font-medium text-gray-900">{caseData.consulteeType === 'student' ? '生徒本人' : '大人'} ({caseData.schoolStage})</dd></div>
+                            <div><dt className="text-sm text-gray-500">学校</dt><dd className="text-lg font-medium text-gray-900">{caseData.prefecture} / {caseData.schoolType === 'public' ? '公立' : '私立'}</dd></div>
+                        </dl>
+                        <div className="bg-gray-50 p-4 rounded-lg"><h3 className="font-bold text-gray-600 mb-1 text-sm">概要</h3><p className="text-gray-900 font-bold mb-4">{caseData.summary}</p><h3 className="font-bold text-gray-600 mb-1 text-sm">詳細</h3><p className="text-gray-800 whitespace-pre-wrap text-sm leading-relaxed">{caseData.detail}</p></div>
+                    </div>
+                    <div className="mt-8 pt-6 border-t flex items-center justify-between"><span className="font-bold text-gray-700">ステータス:</span><div className="flex gap-2">{['new', 'in_progress', 'completed'].map((sk) => (<button key={sk} onClick={() => handleStatusChange(sk)} className={`px-4 py-2 rounded-full text-sm font-bold ${caseData.status === sk ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 border'}`}>{sk}</button>))}</div></div>
+                    </>
+                )}
+            </div>
+            {/* ▼▼▼ 復活: 相談記録（タイムライン） ▼▼▼ */}
+            <div className="bg-white rounded-lg shadow border-t-4 border-green-500 overflow-hidden mt-6">
+                <div className="p-4 bg-green-50 border-b border-green-100 flex justify-between items-center">
+                    <h2 className="text-lg font-bold text-green-900 flex items-center gap-2">📝 相談記録・対応履歴</h2>
+                    <span className="text-xs text-green-700 bg-white px-2 py-1 rounded border border-green-200">スタッフ共有用</span>
+                </div>
+                
+                {/* 記録の入力エリア */}
+                <div className="p-6 border-b bg-gray-50">
+                    <div className="flex gap-2">
+                         <textarea 
+                            className="flex-1 border border-gray-300 rounded p-3 text-sm text-gray-900 focus:ring-2 focus:ring-green-500 focus:border-transparent transition" 
+                            rows={3}
+                            placeholder="対応内容や連絡事項を入力してください..." 
+                            value={newRecord} 
+                            onChange={(e) => setNewRecord(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex justify-end mt-2">
+                        <button 
+                            onClick={handleAddRecord} 
+                            disabled={isSending || !newRecord.trim()} 
+                            className="bg-green-600 text-white px-6 py-2 rounded font-bold hover:bg-green-700 disabled:opacity-50 transition shadow-sm flex items-center gap-2"
+                        >
+                            {isSending ? '送信中...' : '記録を追加'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* 過去の記録リスト */}
+                <div className="p-6 bg-white max-h-[500px] overflow-y-auto space-y-4">
+                    {records.length === 0 ? (
+                        <div className="text-center text-gray-400 py-4">まだ記録はありません</div>
+                    ) : (
+                        records.map((rec) => (
+                            <div key={rec.id} className="border-b last:border-0 pb-4 last:pb-0">
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="font-bold text-gray-800 text-sm">{rec.createdBy || '担当者'}</span>
+                                    <span className="text-xs text-gray-500">
+                                        {rec.createdAt?.toDate ? rec.createdAt.toDate().toLocaleString() : '---'}
+                                    </span>
+                                </div>
+                                <p className="text-gray-800 text-sm whitespace-pre-wrap leading-relaxed">
+                                    {rec.content}
+                                </p>
+                            </div>
+                        ))
+                    )}
+                </div>
             </div>
         </div>
 
