@@ -269,11 +269,24 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
         {/* === 左カラム: 案件詳細 === */}
         <div className="lg:col-span-2 space-y-6 pb-12">
             <div className="bg-white rounded-lg shadow p-6 flex justify-between items-center">
-                <div><h1 className="text-2xl font-bold text-gray-800">{caseData.name} 様</h1><p className="text-sm text-gray-500">受付日: {caseData.createdAt?.toDate ? caseData.createdAt.toDate().toLocaleDateString() : '---'}</p></div>
-                <div className="flex gap-3">
-                    {caseData.documentUrl && (<a href={caseData.documentUrl} target="_blank" rel="noopener noreferrer" className="bg-blue-100 text-blue-700 px-4 py-2 rounded font-bold hover:bg-blue-200 transition">📄 相談記録を開く</a>)}
-                    <button onClick={() => router.back()} className="bg-gray-100 text-gray-600 px-4 py-2 rounded hover:bg-gray-200 transition">一覧に戻る</button>
-                </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  {/* caseNumberがあれば表示 */}
+                  {caseData.caseNumber && (
+                      <span className="text-indigo-600 font-mono text-xl bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                          #{caseData.caseNumber}
+                      </span>
+                  )}
+                  <span>{caseData.name} 様</span>
+                </h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  受付日: {caseData.createdAt?.toDate ? caseData.createdAt.toDate().toLocaleDateString() : '---'}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                  {caseData.documentUrl && (<a href={caseData.documentUrl} target="_blank" rel="noopener noreferrer" className="bg-blue-100 text-blue-700 px-4 py-2 rounded font-bold hover:bg-blue-200 transition">📄 相談記録を開く</a>)}
+                  <button onClick={() => router.back()} className="bg-gray-100 text-gray-600 px-4 py-2 rounded hover:bg-gray-200 transition">一覧に戻る</button>
+              </div>
             </div>
 
             <div className="bg-white rounded-lg shadow border-t-4 border-indigo-500 overflow-hidden">

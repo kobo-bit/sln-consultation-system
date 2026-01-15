@@ -16,7 +16,6 @@ export async function POST(req: Request) {
       
       // ★ここに「正しいプロジェクトID」を入力してください（例: sln-system-12345）
       project: process.env.FIREBASE_PROJECT_ID, 
-      
       // ★迷ったらまずは 'us-central1' (米国) で試すのが一番確実です
       location: 'us-central1', 
       

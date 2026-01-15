@@ -17,6 +17,7 @@ export const createDriveResources = functions.region('us-central1').firestore
     
     const newData = snap.data();
     const caseId = context.params.caseId;
+    const caseNumber = newData.caseNumber;
     
     // --- 1. データの翻訳・加工処理エリア ---
     
@@ -78,11 +79,14 @@ export const createDriveResources = functions.region('us-central1').firestore
     }
 
     // ファイル名用日付
-    const today = new Date();
-    const dateStrForTitle = today.toISOString().slice(0, 10).replace(/-/g, "");
+    //const today = new Date();
+    //const dateStrForTitle = today.toISOString().slice(0, 10).replace(/-/g, "");
     
     // ドキュメント名
-    const docName = `[${dateStrForTitle}] 相談記録_${clientName}_${caseId}`;
+    //const docName = `[${dateStrForTitle}] 相談記録_${clientName}_${caseId}`;
+    const numberStr = caseNumber ? String(caseNumber).padStart(4, '0') : "0000";
+    
+    const docName = `${numberStr}_${clientName}`;
 
     // --- 加工終わり ---
 

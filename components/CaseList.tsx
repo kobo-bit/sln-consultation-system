@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 // ▼ 変更: auth もここで読み込む
 import { db, auth } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, Timestamp, getDocs } from 'firebase/firestore';
-// ❌ 削除: import { getAuth } from 'firebase/auth'; 
 import Link from 'next/link';
 
 type CaseData = {
@@ -168,7 +167,11 @@ export default function CaseList() {
                       </div>
                       <span className="text-indigo-600 text-sm font-medium hover:underline">詳細を開く &rarr;</span>
                     </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-1">{c.name} 様</h3>
+                    <h3 className="text-lg font-bold text-gray-900 mb-1">
+                      {/* 番号があれば表示する */}
+                      {c.caseNumber ? <span className="text-blue-600 mr-2">#{c.caseNumber}</span> : null}
+                      {c.name} 様
+                    </h3>
                     <p className="text-gray-600 text-sm line-clamp-1">{c.summary}</p>
                   </Link>
                 </li>
