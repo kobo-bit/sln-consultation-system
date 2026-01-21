@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth"; // 認証機能は後で使います
+import { getStorage } from "firebase/storage";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -19,4 +20,4 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 // データベース機能を使えるようにしてエクスポート
 export const db = getFirestore(app);
 export const auth = getAuth(app); // 後で有効化
-
+export const storage = getStorage(app);
