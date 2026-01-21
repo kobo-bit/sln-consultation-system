@@ -13,6 +13,8 @@ type CaseData = {
   status: string;
   assignedTo?: string[] | string;
   createdAt: Timestamp;
+  // ▼ 追加: 型定義に管理番号を含めておくと安全です
+  caseNumber?: number | string; 
   [key: string]: any;
 };
 
@@ -47,7 +49,11 @@ export default function CaseList() {
     };
     fetchStaffMap();
 
-    const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+    // ▼▼▼ ここを修正しました ▼▼▼
+    // 元: orderBy('createdAt', 'desc') -> 日付の新しい順
+    // 今: orderBy('caseNumber', 'desc') -> 管理番号の大きい順
+    const q = query(collection(db, 'cases'), orderBy('caseNumber', 'desc'));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const casesData = snapshot.docs.map((doc) => ({
         id: doc.id,
