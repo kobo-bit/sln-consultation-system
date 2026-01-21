@@ -1,104 +1,242 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
-import { useRouter } from 'next/navigation';
-import { db, auth, storage } from '../../../lib/firebase'; // ★storage追加
-import { 
-    doc, getDoc, collection, addDoc, query, orderBy, onSnapshot, 
-    serverTimestamp, updateDoc, Timestamp 
-} from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
-// ★追加: Storage関連
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-
-type CaseData = {
-  id: string;
-  caseNumber?: number; // 通し番号
-  name: string;
-  consulteeType: string;
-  relationship?: string;
-  prefecture?: string;
-  schoolType?: string;
-  schoolStage?: string;
-  grade?: string;
-  schoolName?: string; // 学校名
-  summary: string;
-  detail: string;
-  status: string;
-  createdAt: any;
-  assignedTo?: string[];
-  documentUrl?: string; // Google Doc URL
-};
-
-type RecordData = {
-  id: string;
-  content: string;
-  createdAt: any;
-  createdBy: string;
-  // ★追加: 添付ファイル情報
-  attachmentUrl?: string;
-  attachmentName?: string;
-};
-
-// スタッフリスト（簡易実装）
-const staffList = [
-    { email: "obo@n-sln.org", name: "大保 海翔" },
-    { email: "nishimura@n-sln.org", name: "西村 静恵" },
+const PREFECTURES = [
+  "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+  "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+  "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県",
+  "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+  "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+  "徳島県", "香川県", "愛媛県", "高知県",
+  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
 ];
 
-export default function CaseDetail({ params }: { params: Promise<{ id: string }> }) {
-  // Next.js 15対応: paramsをunwrap
-  const { id } = use(params);
-  
-  const router = useRouter();
-  const [caseData, setCaseData] = useState<CaseData | null>(null);
-  const [records, setRecords] = useState<RecordData[]>([]);
-  const [newRecord, setNewRecord] = useState("");
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isSending, setIsSending] = useState(false);
-  const [isAiLoading, setIsAiLoading] = useState(false);
+import { useEffect, useState, use } from 'react';
+// ★storageを追加
+import { db, auth, storage } from '../../../lib/firebase';
+import { 
+  doc, getDoc, updateDoc, Timestamp, 
+  collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, getDocs, where, limit 
+} from 'firebase/firestore';
+// ★Storage関連機能を追加
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { onAuthStateChanged } from "firebase/auth";
+import { useRouter } from 'next/navigation';
+import Header from '../../../components/Header';
 
+type Staff = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type ChatMessage = {
+  role: 'user' | 'model';
+  text: string;
+};
+
+export default function CaseDetail({ params }: { params: Promise<{ id: string }> }) {
+  const [user, setUser] = useState<any>(null);
+  const [caseData, setCaseData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [staffList, setStaffList] = useState<Staff[]>([]);
+  const [pastCases, setPastCases] = useState<any[]>([]);
+
+  // AI関連
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
+  const [aiInput, setAiInput] = useState('');
+  const [isAiThinking, setIsAiThinking] = useState(false);
+
+  // 編集関連
+  const [scheduleMode, setScheduleMode] = useState(false);
+  const [editData, setEditData] = useState({
+    meetingStatus: 'untouched', meetingType: 'online', meetingDate: '', locationOrUrl: '', attendeeEmails: ''
+  });
+  
+  // タイムライン・ファイル関連
+  const [records, setRecords] = useState<any[]>([]);
+  const [newRecord, setNewRecord] = useState('');
+  const [isSending, setIsSending] = useState(false);
   // ★追加: ファイル選択用State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        router.push('/login');
-      } else {
-        setCurrentUser(user);
-      }
-    });
+  const router = useRouter();
+  const { id } = use(params);
+  const currentUser = auth.currentUser;
 
+  // 基本情報編集用のState
+  const [isEditing, setIsEditing] = useState(false);
+  const [basicFormData, setBasicFormData] = useState({
+    name: '', consulteeType: 'student', schoolType: 'public', 
+    schoolStage: 'high', prefecture: '', summary: '', detail: ''
+  });
+
+  // 🔐 門番機能
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (!currentUser) router.push('/login');
+      else setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, [router]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    // 1. スタッフ取得
+    const fetchStaff = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'staff'));
+        setStaffList(snap.docs.map(d => ({ id: d.id, name: d.data().name, email: d.data().email } as Staff)));
+      } catch (e) { console.error(e); }
+    };
+    fetchStaff();
+
+    // 2. 案件詳細取得
     const fetchCase = async () => {
-      const docRef = doc(db, "cases", id);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setCaseData({ id: docSnap.id, ...docSnap.data() } as CaseData);
-      } else {
-        alert("案件が見つかりません");
-        router.push('/dashboard');
-      }
+      const d = await getDoc(doc(db, 'cases', id));
+      if (d.exists()) {
+        const data = d.data();
+        setCaseData({ id: d.id, ...data });
+        setBasicFormData({
+          name: data.name || '',
+          consulteeType: data.consulteeType || 'student',
+          schoolType: data.schoolType || 'public',
+          schoolStage: data.schoolStage || 'high',
+          prefecture: data.prefecture || '',
+          summary: data.summary || '',
+          detail: data.detail || ''
+        });
+        setEditData({
+            meetingStatus: data.meetingStatus || 'untouched',
+            meetingType: data.meetingType || 'online',
+            meetingDate: data.meetingDate ? formatDateForInput(data.meetingDate) : '',
+            locationOrUrl: data.locationOrUrl || '',
+            attendeeEmails: data.attendeeEmails || ''
+        });
+      } else { alert('案件なし'); router.push('/dashboard'); }
       setLoading(false);
     };
-
     fetchCase();
 
-    // タイムラインのリアルタイム取得
-    const q = query(collection(db, "cases", id, "records"), orderBy("createdAt", "desc"));
-    const unsubscribeRecords = onSnapshot(q, (snapshot) => {
-      const recs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RecordData));
-      setRecords(recs);
+    // 3. 過去事例取得
+    const fetchPast = async () => {
+        try {
+            const q = query(collection(db, 'cases'), where('status', '==', 'completed'), orderBy('createdAt', 'desc'), limit(20));
+            const snap = await getDocs(q);
+            setPastCases(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter((c:any) => c.id !== id));
+        } catch (e) { console.error(e); }
+    };
+    fetchPast();
+
+    // 4. 履歴監視 (人間が書いた記録)
+    const unsubRecords = onSnapshot(query(collection(db, "cases", id, "records"), orderBy("createdAt", "desc")), (snap) => {
+      setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // 5. AIチャット履歴の監視
+    const unsubAi = onSnapshot(query(collection(db, "cases", id, "aiChats"), orderBy("createdAt", "asc")), (snap) => {
+      const msgs = snap.docs.map(d => ({ 
+        role: d.data().role, 
+        text: d.data().text 
+      })) as ChatMessage[];
+      setAiMessages(msgs);
     });
 
     return () => {
-      unsubscribeAuth();
-      unsubscribeRecords();
+      unsubRecords();
+      unsubAi();
     };
   }, [id, router]);
 
-  // ▼▼▼ 投稿機能（ファイルアップロード対応） ▼▼▼
+  const formatDateForInput = (timestamp: any) => {
+    if (!timestamp?.toDate) return '';
+    const d = timestamp.toDate();
+    const pad = (n: number) => n < 10 ? '0' + n : n;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // AI送信処理
+  const handleAiSend = async () => {
+    if (!aiInput.trim()) return;
+    
+    const userMessage = aiInput;
+    setAiInput('');
+    setIsAiThinking(true);
+
+    try {
+      await addDoc(collection(db, 'cases', id, 'aiChats'), {
+        role: 'user',
+        text: userMessage,
+        createdAt: serverTimestamp()
+      });
+
+      let docContent = "（ドキュメントはありません）";
+      if (caseData.documentUrl?.includes('docs.google.com')) {
+          try {
+              const res = await fetch('/api/doc', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ documentUrl: caseData.documentUrl }),
+              });
+              const json = await res.json();
+              if (json.text) docContent = json.text;
+          } catch (e) { console.error("Doc fetch failed", e); }
+      }
+
+      const pastCasesText = pastCases.length > 0 ? pastCases.map(c => `・[事例] ${c.summary}`).join('\n') : "（過去事例なし）";
+      const contextPrompt = `
+      あなたはNPO法人School Liberty Networkの相談アシスタントです。
+      【現在の案件】相談者:${caseData.name}, 概要:${caseData.summary}, 詳細:${caseData.detail}
+      【ドキュメント】${docContent.slice(0, 10000)}
+      【過去履歴】${records.map(r => `・${r.content}${r.attachmentName ? `(添付:${r.attachmentName})` : ''}`).join('\n')}
+      【過去事例】${pastCasesText}
+      【質問】${userMessage}
+      以上の内容をもとに、相談員(入力者)はどのように相談者に接していけばいいかを教えてください。`;
+
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: contextPrompt }),
+      });
+      const json = await res.json();
+      
+      if (!res.ok) throw new Error(json.details || "API Error");
+
+      await addDoc(collection(db, 'cases', id, 'aiChats'), {
+        role: 'model',
+        text: json.text,
+        createdAt: serverTimestamp()
+      });
+
+    } catch (error) {
+      console.error(error);
+      setAiMessages(prev => [...prev, { role: 'model', text: "エラーが発生しました。" }]);
+    } finally {
+      setIsAiThinking(false);
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    try {
+        const u: any = { ...editData, meetingDate: editData.meetingDate ? Timestamp.fromDate(new Date(editData.meetingDate)) : null };
+        await updateDoc(doc(db, 'cases', id), u);
+        setCaseData({ ...caseData, ...u }); setScheduleMode(false); alert('保存しました');
+    } catch { alert('失敗しました'); }
+  };
+  
+  const handleSaveBasicInfo = async () => {
+    try {
+        await updateDoc(doc(db, 'cases', id), basicFormData);
+        setCaseData({ ...caseData, ...basicFormData });
+        setIsEditing(false);
+        alert('基本情報を更新しました');
+    } catch (e) {
+        console.error(e);
+        alert('更新に失敗しました');
+    }
+  }
+  
+  // ▼▼▼ ファイル添付対応版: 記録追加 ▼▼▼
   const handleAddRecord = async () => {
     // 文字もファイルもない場合は何もしない
     if (!newRecord.trim() && !selectedFile) return; 
@@ -114,9 +252,7 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
       // 1. ファイルがある場合はStorageにアップロード
       if (selectedFile) {
         fileName = selectedFile.name;
-        // 保存パス: case_files/{案件ID}/{タイムスタンプ}_{ファイル名}
         const storageRef = ref(storage, `case_files/${id}/${Date.now()}_${fileName}`);
-        
         await uploadBytes(storageRef, selectedFile);
         downloadUrl = await getDownloadURL(storageRef);
       }
@@ -126,12 +262,12 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
         content: newRecord, 
         createdAt: serverTimestamp(), 
         createdBy: userName,
-        // ファイル情報を保存
+        // ファイル情報
         attachmentUrl: downloadUrl || null,
         attachmentName: fileName || null
       });
 
-      // 3. フォームのリセット
+      // 3. リセット
       setNewRecord("");
       setSelectedFile(null);
       // input要素もクリア
@@ -146,164 +282,130 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
     }
   };
 
-  // AIアドバイザー機能
-  const handleAiAsk = async () => {
-    setIsAiLoading(true);
-    try {
-        const res = await fetch('/api/ai', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                prompt: `
-                以下の相談内容について、アドバイスをください。
-                【相談概要】${caseData?.summary}
-                【詳細】${caseData?.detail}
-                【過去の対応履歴】
-                ${records.map(r => `・${r.content}${r.attachmentName ? ` (添付: ${r.attachmentName})` : ''}`).join('\n')}
-                `
-            })
-        });
-        const data = await res.json();
-        
-        // AIの回答をタイムラインに追加
-        await addDoc(collection(db, "cases", id, "records"), { 
-            content: `🤖 [AIアドバイザー]\n${data.answer}`, 
-            createdAt: serverTimestamp(), 
-            createdBy: "AI System"
-        });
-
-    } catch (e) {
-        console.error(e);
-        alert('AIへの問い合わせに失敗しました');
-    } finally {
-        setIsAiLoading(false);
-    }
+  const handleStatusChange = async (st: string) => {
+    if(!caseData) return; await updateDoc(doc(db, 'cases', id), { status: st }); setCaseData({ ...caseData, status: st });
   };
-
-  // ステータス更新
-  const handleStatusChange = async (newStatus: string) => {
-    if (!caseData) return;
-    try {
-        await updateDoc(doc(db, "cases", id), { status: newStatus });
-        setCaseData({ ...caseData, status: newStatus });
-    } catch (e) {
-        console.error(e);
-        alert("ステータス更新に失敗しました");
-    }
+  const toggleStaff = async (email: string) => {
+    let list = Array.isArray(caseData.assignedTo) ? [...caseData.assignedTo] : (caseData.assignedTo ? [caseData.assignedTo] : []);
+    list = list.includes(email) ? list.filter(e => e !== email) : [...list, email];
+    await updateDoc(doc(db, 'cases', id), { assignedTo: list }); setCaseData({ ...caseData, assignedTo: list });
   };
-
-  // Google Doc作成
-  const handleCreateDoc = async () => {
-    if(!confirm("Googleドキュメントを作成しますか？")) return;
-    try {
-        await fetch('/api/doc', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ caseId: id })
-        });
-        alert("作成を開始しました。しばらくするとドライブに保存されます。");
-    } catch (e) {
-        console.error(e);
-        alert("作成に失敗しました");
-    }
-  };
+  const assignToMe = () => { if(currentUser?.email && !((caseData.assignedTo || []).includes(currentUser.email))) toggleStaff(currentUser.email); };
 
   if (loading) return <div className="p-10 text-center">読み込み中...</div>;
-  if (!caseData) return <div className="p-10 text-center">データなし</div>;
+  if (!caseData) return <div className="p-10 text-center">データがありません</div>;
+  const assignedList = Array.isArray(caseData.assignedTo) ? caseData.assignedTo : (caseData.assignedTo ? [caseData.assignedTo] : []);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* ヘッダーエリア */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
-            <button onClick={() => router.push('/dashboard')} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 font-bold">
-                ← 一覧に戻る
-            </button>
-            <div className="flex gap-3">
-                <select 
-                    value={caseData.status} 
-                    onChange={(e) => handleStatusChange(e.target.value)}
-                    className={`border rounded px-3 py-1 font-bold ${
-                        caseData.status === 'new' ? 'bg-red-50 text-red-600 border-red-200' :
-                        caseData.status === 'in_progress' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                        'bg-gray-50 text-gray-600 border-gray-200'
-                    }`}
-                >
-                    <option value="new">未対応</option>
-                    <option value="in_progress">対応中</option>
-                    <option value="completed">完了</option>
-                </select>
-                <button onClick={handleCreateDoc} className="bg-white border border-gray-300 text-gray-700 px-4 py-1 rounded hover:bg-gray-50 text-sm font-bold">
-                    📄 記録票作成
-                </button>
-            </div>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <Header user={user} />
 
-      <div className="max-w-5xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* 左カラム: 相談詳細情報 */}
-        <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100">
-                <div className="mb-6 border-b pb-4">
-                    {/* ★通し番号表示 */}
-                    <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 mb-2">
-                        {caseData.caseNumber && (
-                            <span className="text-indigo-600 font-mono text-xl bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                                #{String(caseData.caseNumber).padStart(4, '0')}
-                            </span>
-                        )}
-                        <span>{caseData.name} 様</span>
-                    </h1>
-                    
-                    <div className="flex flex-wrap gap-3 text-sm text-gray-600 mt-2">
-                        <span className="bg-gray-100 px-2 py-1 rounded">
-                            {caseData.consulteeType === 'student' ? '生徒本人' : '大人'}
-                        </span>
-                        {caseData.schoolStage && (
-                            <span className="bg-gray-100 px-2 py-1 rounded">
-                                {caseData.schoolStage === 'high' ? '高校' : caseData.schoolStage}
-                                {caseData.grade ? ` ${caseData.grade}年` : ''}
-                            </span>
-                        )}
-                        {caseData.prefecture && (
-                            <span className="bg-gray-100 px-2 py-1 rounded">📍 {caseData.prefecture}</span>
-                        )}
-                         {caseData.schoolName && (
-                            <span className="bg-gray-100 px-2 py-1 rounded">🏫 {caseData.schoolName}</span>
-                        )}
-                    </div>
-                </div>
+        {/* === 左カラム: 案件詳細 === */}
+        <div className="lg:col-span-2 space-y-6 pb-12">
+            <div className="bg-white rounded-lg shadow p-6 flex justify-between items-center">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                  {/* 通し番号表示 */}
+                  {caseData.caseNumber && (
+                      <span className="text-indigo-600 font-mono text-xl bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                          #{String(caseData.caseNumber).padStart(4, '0')}
+                      </span>
+                  )}
+                  <span>{caseData.name} 様</span>
+                </h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  受付日: {caseData.createdAt?.toDate ? caseData.createdAt.toDate().toLocaleDateString() : '---'}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                  {caseData.documentUrl && (<a href={caseData.documentUrl} target="_blank" rel="noopener noreferrer" className="bg-blue-100 text-blue-700 px-4 py-2 rounded font-bold hover:bg-blue-200 transition">📄 相談記録を開く</a>)}
+                  <button onClick={() => router.back()} className="bg-gray-100 text-gray-600 px-4 py-2 rounded hover:bg-gray-200 transition">一覧に戻る</button>
+              </div>
+            </div>
 
-                <div className="space-y-6">
-                    <div>
-                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">相談概要</h3>
-                        <p className="text-lg font-bold text-gray-800">{caseData.summary}</p>
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">詳細内容</h3>
-                        <div className="bg-gray-50 p-4 rounded-lg text-gray-700 whitespace-pre-wrap leading-relaxed border border-gray-100">
-                            {caseData.detail}
+            <div className="bg-white rounded-lg shadow border-t-4 border-indigo-500 overflow-hidden">
+                <div className="p-6 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center"><h2 className="text-lg font-bold text-indigo-900 flex items-center gap-2">📅 面談スケジュール管理</h2>{!scheduleMode && (<button onClick={() => setScheduleMode(true)} className="bg-indigo-600 text-white px-4 py-1.5 rounded text-sm hover:bg-indigo-700 transition shadow-sm">編集する</button>)}</div>
+                <div className="p-6">
+                    {scheduleMode ? (
+                        <div className="space-y-6 animate-fadeIn">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">調整状況</label><select className="w-full border rounded p-2" value={editData.meetingStatus} onChange={(e) => setEditData({...editData, meetingStatus: e.target.value})}><option value="untouched">未定</option><option value="adjusting">日程調整中</option><option value="confirmed">確定</option><option value="done">面談完了</option></select></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">面談日時</label><input type="datetime-local" className="w-full border rounded p-2" value={editData.meetingDate} onChange={(e) => setEditData({...editData, meetingDate: e.target.value})} /></div>
+                                <div className="md:col-span-2"><label className="block text-sm font-bold text-gray-700 mb-2">同席者・招待者</label><input type="text" className="w-full border rounded p-2 bg-gray-50" value={editData.attendeeEmails} onChange={(e) => setEditData({...editData, attendeeEmails: e.target.value})} /></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">面談形式</label><div className="flex gap-4 mt-2"><label className="flex items-center"><input type="radio" name="mType" value="online" checked={editData.meetingType === 'online'} onChange={() => setEditData({...editData, meetingType: 'online'})} className="mr-2" /> オンライン</label><label className="flex items-center"><input type="radio" name="mType" value="offline" checked={editData.meetingType === 'offline'} onChange={() => setEditData({...editData, meetingType: 'offline'})} className="mr-2" /> 対面</label></div></div>
+                                <div><label className="block text-sm font-bold text-gray-700 mb-2">{editData.meetingType === 'online' ? '接続先URL' : '実施場所'}</label><input type="text" className="w-full border rounded p-2 bg-gray-50" value={editData.locationOrUrl} onChange={(e) => setEditData({...editData, locationOrUrl: e.target.value})} /></div>
+                            </div>
+                            <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={() => setScheduleMode(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">キャンセル</button><button onClick={handleSaveSchedule} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded hover:bg-indigo-700 shadow">保存する</button></div>
                         </div>
-                    </div>
-                    {caseData.documentUrl && (
-                        <div className="pt-4">
-                            <a href={caseData.documentUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-2 font-bold">
-                                📂 Googleドキュメントを開く
-                            </a>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div><div className="mb-4"><span className={`px-3 py-1 rounded-full text-sm font-bold ${caseData.meetingStatus === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}>{caseData.meetingStatus === 'confirmed' ? '日程確定' : '未定/調整中'}</span></div><div className="text-3xl font-bold text-gray-800 mb-1">{caseData.meetingDate?.toDate ? caseData.meetingDate.toDate().toLocaleString('ja-JP') : '日時未設定'}</div></div>
+                            <div className="bg-gray-50 p-4 rounded border"><h3 className="text-xs font-bold text-gray-400 uppercase mb-2">{caseData.meetingType === 'offline' ? 'ACCESS INFO' : 'MEETING URL'}</h3><p className="text-lg text-gray-800 font-medium break-all">{caseData.locationOrUrl || '未入力'}</p></div>
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* タイムライン・対応履歴 */}
+            <div className="bg-white rounded-lg shadow p-8">
+                <div className="flex justify-between items-center border-b pb-2 mb-6">
+                    <h2 className="text-lg font-bold text-gray-800">詳細情報</h2>
+                    {!isEditing && (
+                        <button onClick={() => setIsEditing(true)} className="text-sm text-indigo-600 hover:bg-indigo-50 px-3 py-1 rounded transition">
+                            ✏️ 情報を編集
+                        </button>
+                    )}
+                </div>
+
+                {isEditing ? (
+                    <div className="space-y-6 animate-fadeIn">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">氏名</label><input type="text" className="w-full border rounded p-2" value={basicFormData.name} onChange={e => setBasicFormData({...basicFormData, name: e.target.value})} /></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">相談者タイプ</label><select className="w-full border rounded p-2" value={basicFormData.consulteeType} onChange={e => setBasicFormData({...basicFormData, consulteeType: e.target.value})}><option value="student">生徒本人</option><option value="adult">大人</option></select></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">都道府県</label><select className="w-full border rounded p-2" value={basicFormData.prefecture} onChange={e => setBasicFormData({...basicFormData, prefecture: e.target.value})}>{PREFECTURES.map(p => <option key={p} value={p}>{p}</option>)}<option value="海外・その他">海外・その他</option></select></div>
+                            <div><label className="block text-sm font-bold text-gray-700 mb-1">学校段階</label><select className="w-full border rounded p-2" value={basicFormData.schoolStage} onChange={e => setBasicFormData({...basicFormData, schoolStage: e.target.value})}><option value="elem">小学校</option><option value="middle">中学校</option><option value="high">高等学校</option><option value="secondary">中高一貫</option><option value="other">その他</option></select></div>
+                        </div>
+                        <div><label className="block text-sm font-bold text-gray-700 mb-1">相談概要（件名）</label><input type="text" className="w-full border rounded p-2" value={basicFormData.summary} onChange={e => setBasicFormData({...basicFormData, summary: e.target.value})} /></div>
+                        <div><label className="block text-sm font-bold text-gray-700 mb-1">詳細内容</label><textarea rows={6} className="w-full border rounded p-2" value={basicFormData.detail} onChange={e => setBasicFormData({...basicFormData, detail: e.target.value})} /></div>
+                        
+                        <div className="flex justify-end gap-3 pt-4 border-t">
+                            <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">キャンセル</button>
+                            <button onClick={handleSaveBasicInfo} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded hover:bg-indigo-700 shadow">更新する</button>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <dl className="space-y-4">
+                            <div className="bg-blue-50 p-4 rounded border border-blue-100">
+                                <div className="flex justify-between items-center mb-2"><dt className="text-xs font-bold text-blue-800 uppercase">担当スタッフ</dt><button onClick={assignToMe} className="text-xs bg-white text-blue-600 border border-blue-200 px-2 py-1 rounded hover:bg-blue-50 shadow-sm">自分を割り当て</button></div>
+                                <dd className="grid grid-cols-2 gap-2">{staffList.map((staff) => (<label key={staff.email} className="flex items-center space-x-2 cursor-pointer bg-white p-2 rounded shadow-sm hover:bg-gray-50"><input type="checkbox" checked={assignedList.includes(staff.email)} onChange={() => toggleStaff(staff.email)} className="form-checkbox h-4 w-4 text-blue-600 rounded" /><span className="text-sm text-gray-700 font-medium">{staff.name}</span></label>))}</dd>
+                            </div>
+                            <div><dt className="text-sm text-gray-500">属性</dt><dd className="text-lg font-medium text-gray-900">{caseData.consulteeType === 'student' ? '生徒本人' : '大人'} ({caseData.schoolStage})</dd></div>
+                            <div>
+                                <dt className="text-sm text-gray-500">学校</dt>
+                                <dd className="text-lg font-medium text-gray-900">
+                                    {caseData.prefecture} / {caseData.schoolType === 'public' ? '公立' : '私立'}
+                                    {/* 学校名があれば表示 */}
+                                    {caseData.schoolName && <div className="text-sm text-gray-600 mt-1">🏫 {caseData.schoolName} ({caseData.grade || '?'}年)</div>}
+                                </dd>
+                            </div>
+                        </dl>
+                        <div className="bg-gray-50 p-4 rounded-lg"><h3 className="font-bold text-gray-600 mb-1 text-sm">概要</h3><p className="text-gray-900 font-bold mb-4">{caseData.summary}</p><h3 className="font-bold text-gray-600 mb-1 text-sm">詳細</h3><p className="text-gray-800 whitespace-pre-wrap text-sm leading-relaxed">{caseData.detail}</p></div>
+                    </div>
+                    <div className="mt-8 pt-6 border-t flex items-center justify-between"><span className="font-bold text-gray-700">ステータス:</span><div className="flex gap-2">{['new', 'in_progress', 'completed'].map((sk) => (<button key={sk} onClick={() => handleStatusChange(sk)} className={`px-4 py-2 rounded-full text-sm font-bold ${caseData.status === sk ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 border'}`}>{sk}</button>))}</div></div>
+                    </>
+                )}
+            </div>
+
+            {/* ▼▼▼ 相談記録・ファイル添付 (復活) ▼▼▼ */}
             <div className="bg-white rounded-lg shadow border-t-4 border-green-500 overflow-hidden mt-6">
                 <div className="p-4 bg-green-50 border-b border-green-100 flex justify-between items-center">
                     <h2 className="text-lg font-bold text-green-900 flex items-center gap-2">📝 相談記録・対応履歴</h2>
                     <span className="text-xs text-green-700 bg-white px-2 py-1 rounded border border-green-200">スタッフ共有用</span>
                 </div>
                 
-                {/* 投稿フォーム */}
                 <div className="p-6 border-b bg-gray-50">
                     <div className="flex flex-col gap-2">
                          <textarea 
@@ -313,8 +415,8 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
                             value={newRecord} 
                             onChange={(e) => setNewRecord(e.target.value)}
                         />
-
-                        {/* ★追加: ファイル選択プレビュー */}
+                        
+                        {/* ファイル選択プレビュー */}
                         {selectedFile && (
                           <div className="flex items-center gap-2 text-sm bg-blue-50 text-blue-800 px-3 py-1 rounded border border-blue-200 self-start">
                             <span>📎 {selectedFile.name}</span>
@@ -333,7 +435,7 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
                     </div>
 
                     <div className="flex justify-between items-center mt-3">
-                        {/* ★追加: ファイル添付ボタン */}
+                        {/* ファイル添付ボタン */}
                         <div className="flex items-center">
                           <label htmlFor="file-upload" className="cursor-pointer flex items-center gap-1 text-gray-500 hover:text-green-600 transition px-2 py-1 rounded hover:bg-gray-100">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
@@ -361,26 +463,22 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
                     </div>
                 </div>
 
-                {/* 記録リスト */}
-                <div className="p-6 bg-white max-h-[600px] overflow-y-auto space-y-6">
+                <div className="p-6 bg-white max-h-[500px] overflow-y-auto space-y-4">
                     {records.length === 0 ? (
                         <div className="text-center text-gray-400 py-4">まだ記録はありません</div>
                     ) : (
                         records.map((rec) => (
-                            <div key={rec.id} className="border-b last:border-0 pb-4 last:pb-0 group">
+                            <div key={rec.id} className="border-b last:border-0 pb-4 last:pb-0">
                                 <div className="flex justify-between items-center mb-1">
-                                    <span className={`font-bold text-sm ${rec.createdBy === 'AI System' ? 'text-purple-600' : 'text-gray-800'}`}>
-                                        {rec.createdBy || '担当者'}
-                                    </span>
-                                    <span className="text-xs text-gray-400">
+                                    <span className="font-bold text-gray-800 text-sm">{rec.createdBy || '担当者'}</span>
+                                    <span className="text-xs text-gray-500">
                                         {rec.createdAt?.toDate ? rec.createdAt.toDate().toLocaleString() : '---'}
                                     </span>
                                 </div>
                                 <p className="text-gray-800 text-sm whitespace-pre-wrap leading-relaxed">
                                     {rec.content}
                                 </p>
-                                
-                                {/* ★追加: 添付ファイルリンク */}
+                                {/* ファイルリンク表示 */}
                                 {rec.attachmentUrl && (
                                   <div className="mt-2">
                                     <a 
@@ -401,51 +499,63 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
             </div>
         </div>
 
-        {/* 右カラム: 管理情報 & AI */}
-        <div className="space-y-6">
-            <div className="bg-gradient-to-br from-purple-50 to-white p-6 rounded-xl shadow-sm border border-purple-100">
-                <h3 className="text-purple-900 font-bold mb-3 flex items-center gap-2">
-                    🤖 AIアドバイザー
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                    相談内容やこれまでの履歴を分析し、対応方針のアドバイスを提示します。
-                </p>
-                <button 
-                    onClick={handleAiAsk}
-                    disabled={isAiLoading}
-                    className="w-full bg-purple-600 text-white font-bold py-2 rounded shadow hover:bg-purple-700 disabled:opacity-50 transition"
-                >
-                    {isAiLoading ? 'AIが考え中...' : 'アドバイスをもらう'}
-                </button>
-            </div>
+        {/* === 右カラム: AIアドバイザー === */}
+        <div className="lg:col-span-1">
+            <div className="sticky top-6 bg-white rounded-xl shadow-lg border border-indigo-100 h-[calc(100vh-120px)] flex flex-col overflow-hidden">
+                <div className="bg-indigo-600 p-4 text-white font-bold flex items-center justify-between shadow-sm shrink-0">
+                   <span className="flex items-center gap-2">🤖 AIアドバイザー (履歴保存)</span>
+                   <span className="text-xs bg-indigo-500 px-2 py-0.5 rounded">Doc対応</span>
+                </div>
 
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-gray-500 font-bold text-xs uppercase tracking-wider mb-4">案件情報</h3>
-                <dl className="space-y-4 text-sm">
-                    <div>
-                        <dt className="text-gray-400 mb-1">受付日</dt>
-                        <dd className="font-bold text-gray-800">
-                            {caseData.createdAt?.toDate ? caseData.createdAt.toDate().toLocaleDateString() : '---'}
-                        </dd>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+                    {aiMessages.length === 0 && (
+                        <div className="text-center text-gray-400 text-sm mt-10">
+                            この案件についてAIと会話できます。<br/>履歴は自動保存されます。
+                        </div>
+                    )}
+                    {aiMessages.map((msg, i) => (
+                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[90%] rounded-lg p-3 text-sm leading-relaxed ${
+                                msg.role === 'user' 
+                                    ? 'bg-indigo-600 text-white' 
+                                    : 'bg-white border text-gray-800 shadow-sm'
+                            }`}>
+                                <p className="whitespace-pre-wrap">{msg.text}</p>
+                            </div>
+                        </div>
+                    ))}
+                    {isAiThinking && (
+                        <div className="flex justify-start">
+                           <div className="bg-white border p-3 rounded-lg shadow-sm text-xs text-gray-500 flex items-center gap-2">
+                               <div className="animate-spin h-3 w-3 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
+                               AIが考え中...
+                           </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-3 bg-white border-t shrink-0">
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                            placeholder="質問を入力..." 
+                            value={aiInput} 
+                            onChange={(e) => setAiInput(e.target.value)} 
+                            onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && handleAiSend()} 
+                        />
+                        <button 
+                            onClick={handleAiSend} 
+                            disabled={isAiThinking || !aiInput.trim()} 
+                            className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition"
+                        >
+                            送信
+                        </button>
                     </div>
-                    {/* ★インポートで追加した学校情報を表示 */}
-                    {caseData.schoolName && (
-                        <div>
-                            <dt className="text-gray-400 mb-1">学校名</dt>
-                            <dd className="font-bold text-gray-800">{caseData.schoolName}</dd>
-                        </div>
-                    )}
-                    {caseData.assignedTo && caseData.assignedTo.length > 0 && (
-                        <div>
-                            <dt className="text-gray-400 mb-1">担当者</dt>
-                            <dd className="font-bold text-gray-800">
-                                {caseData.assignedTo.join(', ')}
-                            </dd>
-                        </div>
-                    )}
-                </dl>
+                </div>
             </div>
         </div>
+
       </div>
     </div>
   );
