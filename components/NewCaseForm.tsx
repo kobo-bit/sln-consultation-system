@@ -105,7 +105,7 @@ export default function NewCaseForm() {
       }
 
       alert(`登録しました！ (受付番号: #${result.number})`);
-      router.push('/dashboard'); 
+      router.push('/'); 
 
     } catch (error) {
       console.error(error);

@@ -60,7 +60,7 @@ export async function POST(req: Request) {
                 emoji: true
               },
               // 本番環境のURLに合わせてください
-              url: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://sln-consultation-system.vercel.app'}/cases/${id}`,
+              url: `${process.env.NEXT_PUBLIC_BASE_URL || 'https://sln-consultation-system.n-sln.org'}/cases/${id}`,
               style: "primary"
             }
           ]

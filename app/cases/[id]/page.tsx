@@ -7,7 +7,8 @@ const PREFECTURES = [
   "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
   "鳥取県", "島根県", "岡山県", "広島県", "山口県",
   "徳島県", "香川県", "愛媛県", "高知県",
-  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"
+  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
+  "その他"
 ];
 
 import { useEffect, useState, use } from 'react';
@@ -186,12 +187,14 @@ export default function CaseDetail({ params }: { params: Promise<{ id: string }>
       const pastCasesText = pastCases.length > 0 ? pastCases.map(c => `・[事例] ${c.summary}`).join('\n') : "（過去事例なし）";
       const contextPrompt = `
       あなたはNPO法人School Liberty Networkの相談アシスタントです。
+      以下の案件情報・履歴・関連ドキュメントを「前提知識」として持ち、相談員（ユーザー）からの指示や質問に的確に答えてください。
+      ------
       【現在の案件】相談者:${caseData.name}, 概要:${caseData.summary}, 詳細:${caseData.detail}
       【ドキュメント】${docContent.slice(0, 10000)}
       【過去履歴】${records.map(r => `・${r.content}${r.attachmentName ? `(添付:${r.attachmentName})` : ''}`).join('\n')}
       【過去事例】${pastCasesText}
-      【質問】${userMessage}
-      以上の内容をもとに、相談員(入力者)はどのように相談者に接していけばいいかを教えてください。`;
+      ------
+      【相談員からの指示・質問】${userMessage}`;
 
       const res = await fetch('/api/ai', {
         method: 'POST',
